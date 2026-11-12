@@ -13,11 +13,12 @@ class Settings(BaseSettings):
     )
 
     APP_NAME: str = "Multi-Mode Smart PDF Processing System"
-    ENV: str = "development"
-    PORT: int = 8000
+    ENV: str = "production"
+    PORT: int = 7860
     
     # Keamanan: Daftar email terdaftar yang diizinkan (Allowlist)
-    ALLOWED_EMAILS: str = "accnidzaenal@gmail.com"
+    # Mencakup kedua akun email Anda
+    ALLOWED_EMAILS: str = "accnidzaenal@gmail.com,zexavier369@gmail.com"
     
     # Pengaturan Jaringan & Akses CORS
     CORS_ORIGINS: str = "*"
