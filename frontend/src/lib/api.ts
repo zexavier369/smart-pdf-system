@@ -1,10 +1,10 @@
 import { auth } from "./firebase";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://zexavier-smart-pdf-backend.hf.space";
 
 /**
- * Melakukan panggilan API terautentikasi ke backend FastAPI.
- * Mengambil Firebase ID Token pengguna yang sedang aktif dan menyertakannya di header Authorization.
+ * Melakukan panggilan API terautentikasi ke backend FastAPI di cloud.
+ * Menyertakan Firebase ID Token pengguna yang aktif di header Authorization.
  */
 export async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
   const user = auth.currentUser;
