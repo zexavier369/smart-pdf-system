@@ -22,7 +22,8 @@ export default function HomePage() {
         setErrorMessage(null);
         
         try {
-          const token = await user.getIdToken();
+          // Ambil token terbaru (force refresh jika ada indikasi kedaluwarsa)
+          const token = await user.getIdToken(true);
           const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
             headers: {
               Authorization: `Bearer ${token}`
@@ -33,12 +34,27 @@ export default function HomePage() {
             setAuthStatus("authorized");
           } else {
             const errData = await response.json();
-            setAuthStatus("forbidden");
-            setErrorMessage(errData.detail || "Email Anda tidak diizinkan mengakses sistem ini.");
+            // Jika token kedaluwarsa atau tidak valid (401), bersihkan sesi lama agar pengguna bisa login ulang segar
+            if (response.status === 401) {
+              await logoutUser();
+              setCurrentUser(null);
+              setAuthStatus("unauthenticated");
+              setErrorMessage("Sesi login Anda sebelumnya telah kedaluwarsa. Silakan klik 'Masuk dengan Google' di bawah untuk masuk kembali.");
+            } else {
+              setAuthStatus("forbidden");
+              setErrorMessage(errData.detail || "Email Anda tidak diizinkan mengakses sistem ini.");
+            }
           }
         } catch (err: any) {
-          console.warn("Backend belum merespons, masuk ke mode pratinjau:", err);
-          setAuthStatus("authorized");
+          console.warn("Backend auth verification notice:", err);
+          if (err.code === "auth/user-token-expired" || err.message?.includes("expired")) {
+            await logoutUser();
+            setCurrentUser(null);
+            setAuthStatus("unauthenticated");
+            setErrorMessage("Sesi masuk telah kedaluwarsa. Silakan klik 'Masuk dengan Google' untuk memperbarui sesi.");
+          } else {
+            setAuthStatus("authorized");
+          }
         }
       } else {
         setCurrentUser(null);
@@ -54,7 +70,13 @@ export default function HomePage() {
       setErrorMessage(null);
       await loginWithGoogle();
     } catch (err: any) {
-      setErrorMessage(err.message || "Gagal melakukan proses masuk Google.");
+      if (err.code === "auth/unauthorized-domain") {
+        setErrorMessage("Domain website 'smart-pdf-system.pages.dev' belum didaftarkan di Authorized Domains Firebase Console. Silakan tambahkan domain ini di Firebase.");
+      } else if (err.code === "auth/popup-closed-by-user") {
+        setErrorMessage("Jendela login Google ditutup sebelum proses selesai. Silakan klik tombol masuk kembali.");
+      } else {
+        setErrorMessage(err.message || "Gagal melakukan proses masuk Google.");
+      }
     }
   };
 

@@ -87,8 +87,8 @@ async def get_current_user(
             email = payload.get("email", "").lower()
             uid = payload.get("user_id") or payload.get("sub")
 
-            # Periksa apakah token sudah kedaluwarsa
-            if time.time() > exp:
+            # Periksa apakah token sudah kedaluwarsa (beri toleransi 300 detik / 5 menit untuk clock skew)
+            if time.time() > (exp + 300):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token autentikasi telah kedaluwarsa. Silakan keluar dan masuk kembali.",
