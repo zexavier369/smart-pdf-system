@@ -1,9 +1,9 @@
 import { auth } from "./firebase";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://zexavier-smart-pdf-backend.hf.space";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://smart-pdf-system.vercel.app";
 
 /**
- * Melakukan panggilan API terautentikasi ke backend FastAPI di cloud.
+ * Melakukan panggilan API terautentikasi ke backend FastAPI di cloud (Vercel Serverless).
  * Menyertakan Firebase ID Token pengguna yang aktif di header Authorization.
  */
 export async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
