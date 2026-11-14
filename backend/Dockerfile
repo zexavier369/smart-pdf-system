@@ -1,4 +1,4 @@
-# Menggunakan base image Python yang stabil dan hemat memori
+# Base image Python yang stabil dan hemat memori
 FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -17,13 +17,13 @@ WORKDIR /app
 
 # Salin dan install dependencies Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 # Salin seluruh kode backend
 COPY . .
 
-# Port standar untuk Hugging Face Spaces & Cloud containers (Port 7860)
-EXPOSE 7860
+# Port dinamis: mendukung port 8000 (Koyeb/Render) maupun 7860 (Hugging Face)
+EXPOSE 8000 7860
 
-# Perintah menjalankan server FastAPI menggunakan Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Perintah menjalankan server FastAPI: membaca $PORT jika ada, default ke 8000
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
