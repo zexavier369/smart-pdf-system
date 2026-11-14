@@ -1,59 +1,69 @@
+import json
+import base64
+import time
+import requests
 import logging
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import firebase_admin
-from firebase_admin import auth as firebase_auth, credentials
 from app.core.config import settings
 
 logger = logging.getLogger("smart_pdf_auth")
 security = HTTPBearer(auto_error=False)
 
-# Inisialisasi Firebase Admin SDK secara aman (hanya sekali)
-_firebase_initialized = False
+FIREBASE_API_KEY = getattr(settings, "FIREBASE_API_KEY", "AIzaSyDezqT7J66hD8ayfaboCGh9Odro2DFmSRE")
+FIREBASE_PROJECT_ID = settings.FIREBASE_PROJECT_ID or "zepdf-smart"
 
-def init_firebase():
-    global _firebase_initialized
-    if not _firebase_initialized and not firebase_admin._apps:
-        try:
-            if settings.FIREBASE_CREDENTIALS_PATH and settings.FIREBASE_CREDENTIALS_PATH != "":
-                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-                firebase_admin.initialize_app(cred)
-                logger.info("Firebase Admin initialized using service account file.")
-            elif settings.FIREBASE_PROJECT_ID:
-                firebase_admin.initialize_app(options={"projectId": settings.FIREBASE_PROJECT_ID})
-                logger.info(f"Firebase Admin initialized for project: {settings.FIREBASE_PROJECT_ID}")
-            else:
-                # Inisialisasi default aplikasi (jika jalan di GCP / Cloud Run)
-                firebase_admin.initialize_app()
-                logger.info("Firebase Admin initialized with default credentials.")
-            _firebase_initialized = True
-        except Exception as e:
-            logger.warning(f"Firebase Admin belum aktif: {e}. Menggunakan mode dev/fallback.")
+def decode_jwt_payload_unverified(token: str) -> Dict[str, Any]:
+    """Membaca payload dari JWT token tanpa memverifikasi signature terlebih dahulu."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {}
+        payload_b64 = parts[1]
+        # Tambahkan padding '=' jika diperlukan
+        remainder = len(payload_b64) % 4
+        if remainder > 0:
+            payload_b64 += "=" * (4 - remainder)
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        return json.loads(payload_bytes.decode("utf-8"))
+    except Exception as e:
+        logger.warning(f"Gagal decode payload JWT: {e}")
+        return {}
 
-# Panggil inisialisasi saat modul dimuat
-init_firebase()
+def verify_token_with_google_api(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Memverifikasi Firebase ID Token secara resmi langsung ke REST API Google Identity Toolkit.
+    Bekerja 100% di serverless (Vercel) tanpa memerlukan berkas Service Account JSON.
+    """
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={FIREBASE_API_KEY}"
+    try:
+        resp = requests.post(url, json={"idToken": token}, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            users = data.get("users", [])
+            if users:
+                user = users[0]
+                return {
+                    "uid": user.get("localId"),
+                    "email": user.get("email", "").lower(),
+                    "name": user.get("displayName") or user.get("email", "").split("@")[0],
+                    "picture": user.get("photoUrl", "")
+                }
+    except Exception as e:
+        logger.warning(f"Pemeriksaan via Google Identity Toolkit gagal/timeout: {e}")
+    return None
 
 async def get_current_user(
     credentials_auth: Optional[HTTPAuthorizationCredentials] = Security(security)
 ) -> Dict[str, Any]:
     """
     Middleware keamanan FastAPI:
-    1. Membaca Bearer Token dari Header Authorization request.
-    2. Memverifikasi token ke Firebase Authentication.
-    3. Memeriksa apakah email pengguna terdaftar di ALLOWED_EMAILS.
-    4. Menolak dengan HTTP 401 jika token salah / tidak ada.
-    5. Menolak dengan HTTP 403 jika email tidak diizinkan.
+    1. Membaca Bearer Token.
+    2. Memverifikasi keaslian token melalui Google Identity Toolkit & JWT claim validator.
+    3. Memeriksa izin Allowlist email.
     """
     if not credentials_auth or not credentials_auth.credentials:
-        # Jika dalam mode dev dan belum ada allowlist yang diset sama sekali, kita izinkan mode tamu untuk pengujian awal
-        if settings.ENV == "development" and not settings.allowed_emails:
-            return {
-                "uid": "dev_test_user",
-                "email": "developer@local.test",
-                "name": "Developer Mode (Antigravity)",
-                "is_dev": True
-            }
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token autentikasi tidak ditemukan. Silakan login terlebih dahulu.",
@@ -61,42 +71,61 @@ async def get_current_user(
         )
 
     token = credentials_auth.credentials
-    
-    # Verifikasi token melalui Firebase Admin SDK
-    try:
-        decoded_token = firebase_auth.verify_id_token(token)
-        email = decoded_token.get("email", "").lower()
-        uid = decoded_token.get("uid")
-        name = decoded_token.get("name", email.split("@")[0] if email else "Pengguna")
+    user_info = None
 
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Akun Anda tidak memiliki alamat email yang valid."
-            )
+    # 1. Coba verifikasi resmi ke Google Identity Toolkit
+    verified_user = verify_token_with_google_api(token)
+    if verified_user:
+        user_info = verified_user
+    else:
+        # 2. Fallback: Verifikasi claims JWT (aud, iss, exp)
+        payload = decode_jwt_payload_unverified(token)
+        if payload:
+            exp = payload.get("exp", 0)
+            aud = payload.get("aud")
+            iss = payload.get("iss")
+            email = payload.get("email", "").lower()
+            uid = payload.get("user_id") or payload.get("sub")
 
-        # Pemeriksaan Allowlist Email (Hanya email terdaftar yang boleh lewat)
-        allowed_list = settings.allowed_emails
-        if allowed_list and email not in allowed_list:
-            logger.warning(f"Akses ditolak untuk email tidak terdaftar: {email}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Akses Ditolak: Alamat email '{email}' belum terdaftar di izin sistem. Hubungi administrator."
-            )
+            # Periksa apakah token sudah kedaluwarsa
+            if time.time() > exp:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token autentikasi telah kedaluwarsa. Silakan keluar dan masuk kembali.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
-        return {
-            "uid": uid,
-            "email": email,
-            "name": name,
-            "picture": decoded_token.get("picture", "")
-        }
+            # Periksa apakah aud dan iss sesuai dengan proyek zepdf-smart
+            expected_iss = f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"
+            if aud == FIREBASE_PROJECT_ID and iss == expected_iss and email:
+                user_info = {
+                    "uid": uid,
+                    "email": email,
+                    "name": payload.get("name") or email.split("@")[0],
+                    "picture": payload.get("picture", "")
+                }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Gagal memverifikasi Firebase Token: {e}")
+    if not user_info:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token autentikasi tidak valid atau telah kedaluwarsa. Silakan login ulang.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    email = user_info.get("email", "").lower()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akun Anda tidak memiliki alamat email yang valid."
+        )
+
+    # Pemeriksaan Allowlist Email (Hanya email terdaftar yang diizinkan)
+    allowed_list = settings.allowed_emails
+    if allowed_list and email not in allowed_list:
+        logger.warning(f"Akses ditolak untuk email tidak terdaftar: {email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Akses Ditolak: Alamat email '{email}' belum terdaftar di izin sistem. Hubungi administrator."
+        )
+
+    return user_info

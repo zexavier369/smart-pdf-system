@@ -14,17 +14,17 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "Multi-Mode Smart PDF Processing System"
     ENV: str = "production"
-    PORT: int = 7860
+    PORT: int = 8000
     
     # Keamanan: Daftar email terdaftar yang diizinkan (Allowlist)
-    # Mencakup kedua akun email Anda
     ALLOWED_EMAILS: str = "accnidzaenal@gmail.com,zexavier369@gmail.com"
     
     # Pengaturan Jaringan & Akses CORS
     CORS_ORIGINS: str = "*"
     
-    # Konfigurasi Firebase Admin
+    # Konfigurasi Firebase
     FIREBASE_PROJECT_ID: str = "zepdf-smart"
+    FIREBASE_API_KEY: str = "AIzaSyDezqT7J66hD8ayfaboCGh9Odro2DFmSRE"
     FIREBASE_CREDENTIALS_PATH: str = ""
 
     # Proteksi Memori RAM & Batasan Berkas
