@@ -122,7 +122,7 @@ def analyze_renamer_page(
     text, method = extract_text_from_page(page)
     sj_num = extract_sj_number(text)
     day_num, full_date_str, date_error = parse_indonesian_date(text)
-    thumbnail = generate_page_thumbnail(page, max_dim=500)
+    thumbnail = generate_page_thumbnail(page, max_dim=1400)
 
     # Susun usulan nama file jika nomor SJ dan tanggal berhasil diekstrak
     proposed_filename = None

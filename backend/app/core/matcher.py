@@ -12,49 +12,63 @@ def normalize_po_number(raw_text: str, is_doc_a: bool = True) -> Optional[str]:
     """
     Normalisasi nomor PO:
     - Disimpan sebagai string, BUKAN integer (mempertahankan angka nol di depan: "001234").
-    - Pada Dokumen A: mencari format seperti "PO 12345", "PO: 001234", "PO# 12345", "P.O. 12345", atau label PO.
-    - Pada Dokumen B: mencari nomor PO seperti "12345" atau "001234".
+    - Pada Dokumen A: mencari format seperti "PO Number 2004595909", "PO: 001234", "PURCHASE ORDER 12345".
+    - Pada Dokumen B: mencari nomor PO pada tabel Surat Jalan ("No PO." atau urutan angka berulang).
     """
     if not raw_text:
         return None
 
     text = raw_text.strip()
+    stopwords = {"keterangan", "ceklist", "satuan", "qty", "nama", "barang", "nomor", "number", "item", "page", "date"}
 
     if is_doc_a:
-        # Dokumen A: Cari pola PO dengan awalan label
-        # Contoh: "PO 12345", "PO: 001234", "PO# 12345", "P.O. 12345", "PURCHASE ORDER: 12345"
+        # Dokumen A (Goods Receipt / Form PO):
+        # Cari pola PO Number, PO NO, PO:, Purchase Order dsb.
         patterns = [
-            r'(?:PO|P\.O\.|PURCHASE\s+ORDER)[\s\:\#\.\-]+([A-Za-z0-9\-]+)',
+            r'(?:PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?|PURCHASE\s+ORDER\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)',
             r'\bPO\s*([A-Za-z0-9\-]+)',
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                po = match.group(1).strip()
-                # Bersihkan karakter pemisah berlebih di ujung jika ada
-                po = po.strip(".:-#")
-                if len(po) >= 2:
+                po = match.group(1).strip().strip(".:-#")
+                if po.lower() not in stopwords and len(po) >= 3:
                     return po
 
-        # Fallback Dokumen A jika awalan tidak tertangkap tapi ada angka PO di baris awal
-        match_digits = re.search(r'\b([0-9]{4,12})\b', text)
+        # Fallback Dokumen A jika awalan tidak tertangkap tapi ada angka 6-12 digit
+        match_digits = re.search(r'\b([0-9]{6,12})\b', text)
         if match_digits:
             return match_digits.group(1).strip()
 
     else:
-        # Dokumen B: Nomor PO biasanya tercetak langsung seperti "12345" atau "001234"
-        # Coba periksa apakah ada label PO terlebih dahulu
-        match_labeled = re.search(r'(?:PO|P\.O\.)[\s\:\#\.\-]+([A-Za-z0-9\-]+)', text, re.IGNORECASE)
-        if match_labeled:
-            po = match_labeled.group(1).strip().strip(".:-#")
-            if len(po) >= 2:
-                return po
+        # Dokumen B (Surat Jalan):
+        # 1. Coba cari jika ada label spesifik No PO / PO
+        patterns = [
+            r'(?:NO\.?\s*PO\.?|PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                po = match.group(1).strip().strip(".:-#")
+                if po.lower() not in stopwords and len(po) >= 3 and (not po.isdigit() or len(po) >= 5):
+                    return po
 
-        # Jika tanpa label, cari urutan angka 4-12 digit (format umum nomor PO)
-        matches = re.findall(r'\b([0-9]{4,12})\b', text)
-        if matches:
-            # Ambil kemunculan angka yang paling relevan
-            return matches[0].strip()
+        # 2. Pada tabel Surat Jalan, nomor PO (misal: 2004595909) berulang di setiap baris barang
+        candidates = re.findall(r'\b([0-9]{6,12})\b', text)
+        if candidates:
+            # Singkirkan nomor Surat Jalan jika tertangkap dalam daftar kandidat
+            sj_match = re.search(r'(?:SURAT\s*JALAN|NO\.?\s*SJ)[\s\:\#\.\-]+([0-9]+)', text, re.IGNORECASE)
+            sj_num = sj_match.group(1).strip() if sj_match else None
+            
+            filtered = [c for c in candidates if c != sj_num]
+            if filtered:
+                # Ambil nomor yang paling sering muncul (kolom PO di tabel barang)
+                counts = {}
+                for c in filtered:
+                    counts[c] = counts.get(c, 0) + 1
+                most_common = max(counts, key=counts.get)
+                return most_common
+            return candidates[0].strip()
 
     return None
 

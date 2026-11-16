@@ -13,6 +13,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="id">
+      <head>
+        <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" async></script>
+      </head>
       <body className="antialiased min-h-screen flex flex-col bg-slate-50 text-slate-800">
         <header className="bg-slate-900 text-white shadow-md sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

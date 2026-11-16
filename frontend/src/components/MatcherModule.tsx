@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { API_BASE_URL, fetchWithAuth } from "@/lib/api";
+import { detectBarcodeFromImage, runOcrOnImage, extractPoFromText } from "@/lib/ocrClient";
 
 interface PageData {
   doc_type: "A" | "B";
@@ -63,7 +64,7 @@ export default function MatcherModule() {
 
     setLoading(true);
     setErrorMsg(null);
-    setStatusText("Mengunggah dan membaca halaman dokumen...");
+    setStatusText("Mengunggah dan menyiapkan halaman dokumen...");
 
     try {
       const formData = new FormData();
@@ -78,14 +79,108 @@ export default function MatcherModule() {
 
       const data = await res.json();
       setSessionId(data.session_id);
-      setPagesA(data.pages_a);
-      setPagesB(data.pages_b);
+
+      let currentPagesA: PageData[] = [...data.pages_a];
+      let currentPagesB: PageData[] = [...data.pages_b];
+      setPagesA(currentPagesA);
+      setPagesB(currentPagesB);
       setAnalysis(data.analysis);
+
+      // Periksa apakah dokumen merupakan hasil scan (gambar) yang nomor PO-nya belum terbaca
+      const needsOcrA = currentPagesA.some((p) => !p.po_number);
+      const needsOcrB = currentPagesB.some((p) => !p.po_number);
+
+      if (needsOcrA || needsOcrB) {
+        setStatusText("Mendeteksi PDF scan gambar. Membaca teks otomatis di peramban (OCR)...");
+
+        // 1. Ekstraksi Dokumen A (Goods Receipt / PO)
+        for (let i = 0; i < currentPagesA.length; i++) {
+          if (!currentPagesA[i].po_number && currentPagesA[i].thumbnail) {
+            setStatusText(`Membaca Dokumen A Halaman ${i + 1} dari ${currentPagesA.length}...`);
+            // Coba deteksi barcode terlebih dahulu
+            let detectedPo = await detectBarcodeFromImage(currentPagesA[i].thumbnail);
+            if (!detectedPo) {
+              const text = await runOcrOnImage(currentPagesA[i].thumbnail);
+              detectedPo = extractPoFromText(text, true);
+            }
+            if (detectedPo) {
+              currentPagesA[i].po_number = detectedPo;
+              currentPagesA[i].is_readable = true;
+            }
+          }
+        }
+
+        // 2. Ekstraksi Dokumen B (Surat Jalan - kolom No PO di tabel)
+        for (let j = 0; j < currentPagesB.length; j++) {
+          if (!currentPagesB[j].po_number && currentPagesB[j].thumbnail) {
+            setStatusText(`Membaca Dokumen B Halaman ${j + 1} dari ${currentPagesB.length}...`);
+            const text = await runOcrOnImage(currentPagesB[j].thumbnail);
+            const detectedPo = extractPoFromText(text, false);
+            if (detectedPo) {
+              currentPagesB[j].po_number = detectedPo;
+              currentPagesB[j].is_readable = true;
+            }
+          }
+        }
+
+        setPagesA([...currentPagesA]);
+        setPagesB([...currentPagesB]);
+
+        // 3. Validasi ulang otomatis ke backend dengan nomor PO yang baru terbaca
+        setStatusText("Menyelaraskan pasangan dokumen...");
+        const revalRes = await fetchWithAuth("/api/matcher/revalidate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: data.session_id,
+            mode: mode,
+            pages_a: currentPagesA,
+            pages_b: currentPagesB,
+          }),
+        });
+        const revalData = await revalRes.json();
+        setAnalysis(revalData.analysis);
+      }
+
       setStatusText("");
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal memproses dokumen.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSingleOcr = async (type: "A" | "B", index: number) => {
+    setLoading(true);
+    setStatusText(`Memindai ulang OCR Dokumen ${type} Halaman ${index + 1}...`);
+    try {
+      if (type === "A") {
+        const target = pagesA[index];
+        if (target && target.thumbnail) {
+          let po = await detectBarcodeFromImage(target.thumbnail);
+          if (!po) {
+            const text = await runOcrOnImage(target.thumbnail);
+            po = extractPoFromText(text, true);
+          }
+          if (po) {
+            handlePoChangeA(index, po);
+          }
+        }
+      } else {
+        const target = pagesB[index];
+        if (target && target.thumbnail) {
+          const text = await runOcrOnImage(target.thumbnail);
+          const po = extractPoFromText(text, false);
+          if (po) {
+            handlePoChangeB(index, po);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn("Gagal OCR:", e);
+    } finally {
+      setLoading(false);
+      setStatusText("");
     }
   };
 
@@ -439,14 +534,26 @@ export default function MatcherModule() {
                           <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded">Tidak Terbaca</span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right space-x-3">
                         {page.thumbnail && (
-                          <button
-                            onClick={() => setPreviewImage(page.thumbnail)}
-                            className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
-                          >
-                            Lihat Halaman
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSingleOcr("A", idx)}
+                              disabled={loading}
+                              className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold transition"
+                              title="Pindai ulang halaman ini dengan OCR"
+                            >
+                              🔍 Pindai OCR
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage(page.thumbnail)}
+                              className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
+                            >
+                              Lihat Halaman
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -473,14 +580,26 @@ export default function MatcherModule() {
                           <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded">Tidak Terbaca</span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right space-x-3">
                         {page.thumbnail && (
-                          <button
-                            onClick={() => setPreviewImage(page.thumbnail)}
-                            className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
-                          >
-                            Lihat Halaman
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSingleOcr("B", idx)}
+                              disabled={loading}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-semibold transition"
+                              title="Pindai ulang halaman ini dengan OCR"
+                            >
+                              🔍 Pindai OCR
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage(page.thumbnail)}
+                              className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
+                            >
+                              Lihat Halaman
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>

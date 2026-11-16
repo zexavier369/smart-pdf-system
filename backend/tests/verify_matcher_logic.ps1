@@ -4,8 +4,11 @@ Write-Host "=== PENGUJIAN LOGIKA PDF MATCHER (MODUL A) ===" -ForegroundColor Cya
 
 # 1. Uji Regex Normalisasi PO Dokumen A
 function Normalize-PoA($text) {
-    if ($text -match "(?:PO|P\.O\.|PURCHASE\s+ORDER)[\s\:\#\.\-]+([A-Za-z0-9\-]+)") {
-        return $matches[1].Trim().Trim(".:-#")
+    if ($text -match "(?:PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?|PURCHASE\s+ORDER\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)") {
+        $po = $matches[1].Trim().Trim(".:-#")
+        if ($po.ToLower() -notmatch "^(number|keterangan|ceklist)$" -and $po.Length -ge 3) {
+            return $po
+        }
     }
     if ($text -match "\b([0-9]{4,12})\b") {
         return $matches[1].Trim()
@@ -15,8 +18,11 @@ function Normalize-PoA($text) {
 
 # 2. Uji Regex Normalisasi PO Dokumen B
 function Normalize-PoB($text) {
-    if ($text -match "(?:PO|P\.O\.)[\s\:\#\.\-]+([A-Za-z0-9\-]+)") {
-        return $matches[1].Trim().Trim(".:-#")
+    if ($text -match "(?:NO\.?\s*PO\.?|PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)") {
+        $po = $matches[1].Trim().Trim(".:-#")
+        if ($po.ToLower() -notmatch "^(number|keterangan|ceklist)$" -and $po.Length -ge 3) {
+            return $po
+        }
     }
     if ($text -match "\b([0-9]{4,12})\b") {
         return $matches[1].Trim()
@@ -24,16 +30,18 @@ function Normalize-PoB($text) {
     return $null
 }
 
-# Uji 1: Preservasi Angka Nol di Depan
+# Uji 1: Preservasi Angka Nol di Depan & Ekstraksi Label PO Nyata
 $resA1 = Normalize-PoA "PO 001234"
 $resA2 = Normalize-PoA "PURCHASE ORDER: 12345"
+$resA3 = Normalize-PoA "PO Number    2004595909"
 $resB1 = Normalize-PoB "001234"
 $resB2 = Normalize-PoB "12345"
+$resB3 = Normalize-PoB "No PO.    2004595909"
 
-if ($resA1 -eq "001234" -and $resA2 -eq "12345" -and $resB1 -eq "001234" -and $resB2 -eq "12345") {
-    Write-Host "[PASS] Normalisasi PO: Angka nol di depan (001234) dan awalan PO lolos verifikasi!" -ForegroundColor Green
+if ($resA1 -eq "001234" -and $resA2 -eq "12345" -and $resA3 -eq "2004595909" -and $resB1 -eq "001234" -and $resB2 -eq "12345" -and $resB3 -eq "2004595909") {
+    Write-Host "[PASS] Normalisasi PO: Angka nol di depan (001234) dan PO Number (2004595909) lolos verifikasi!" -ForegroundColor Green
 } else {
-    Write-Host "[FAIL] Normalisasi PO gagal!" -ForegroundColor Red
+    Write-Host "[FAIL] Normalisasi PO gagal! ResA3=$resA3, ResB3=$resB3" -ForegroundColor Red
     exit 1
 }
 

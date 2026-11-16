@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { API_BASE_URL, fetchWithAuth } from "@/lib/api";
+import { runOcrOnImage, extractSjDataFromText } from "@/lib/ocrClient";
 
 interface RenamerPage {
   page_id: string;
@@ -55,7 +56,7 @@ export default function RenamerModule() {
 
     setLoading(true);
     setErrorMsg(null);
-    setStatusText("Menganalisis setiap halaman Surat Jalan...");
+    setStatusText("Menyiapkan dan memeriksa halaman Surat Jalan...");
 
     try {
       const formData = new FormData();
@@ -70,13 +71,96 @@ export default function RenamerModule() {
 
       const data = await res.json();
       setSessionId(data.session_id);
+
+      let currentPages: RenamerPage[] = [...data.validation.pages];
       setValidation(data.validation);
-      setPages(data.validation.pages);
+      setPages(currentPages);
+
+      // Periksa apakah ada halaman hasil scan gambar yang nomor SJ atau tanggalnya belum terbaca
+      const needsOcr = currentPages.some((p) => !p.sj_number || p.day_number === null);
+
+      if (needsOcr) {
+        setStatusText("Mendeteksi PDF scan gambar. Membaca teks otomatis di peramban (OCR)...");
+
+        for (let i = 0; i < currentPages.length; i++) {
+          if ((!currentPages[i].sj_number || currentPages[i].day_number === null) && currentPages[i].thumbnail) {
+            setStatusText(`Membaca Surat Jalan Halaman ${i + 1} dari ${currentPages.length}...`);
+            const ocrText = await runOcrOnImage(currentPages[i].thumbnail);
+            const sjData = extractSjDataFromText(ocrText);
+
+            if (sjData.sjNumber && !currentPages[i].sj_number) {
+              currentPages[i].sj_number = sjData.sjNumber;
+            }
+            if (sjData.dayNumber !== null && currentPages[i].day_number === null) {
+              currentPages[i].day_number = sjData.dayNumber;
+              currentPages[i].full_date_str = sjData.fullDateStr || "";
+              currentPages[i].date_error = null;
+            }
+            if (currentPages[i].sj_number && currentPages[i].day_number !== null) {
+              const proposed = `SJ_${currentPages[i].sj_number}-${currentPages[i].day_number}.pdf`;
+              currentPages[i].proposed_filename = proposed;
+              currentPages[i].final_filename = proposed;
+              currentPages[i].status = "VALID";
+              currentPages[i].validation_errors = [];
+            }
+          }
+        }
+
+        setPages([...currentPages]);
+
+        // Validasi ulang hasil OCR dengan validasi backend
+        setStatusText("Memvalidasi kalender dan format Surat Jalan...");
+        const revalRes = await fetchWithAuth("/api/renamer/revalidate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: data.session_id,
+            pages: currentPages,
+          }),
+        });
+        const revalData = await revalRes.json();
+        setValidation(revalData.validation);
+        setPages(revalData.validation.pages);
+      }
+
       setStatusText("");
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal memproses berkas Surat Jalan.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSingleOcr = async (index: number) => {
+    const target = pages[index];
+    if (!target || !target.thumbnail) return;
+
+    setLoading(true);
+    setStatusText(`Memindai ulang OCR Halaman ${index + 1}...`);
+    try {
+      const ocrText = await runOcrOnImage(target.thumbnail);
+      const sjData = extractSjDataFromText(ocrText);
+
+      const updated = [...pages];
+      if (sjData.sjNumber) updated[index].sj_number = sjData.sjNumber;
+      if (sjData.dayNumber !== null) {
+        updated[index].day_number = sjData.dayNumber;
+        updated[index].full_date_str = sjData.fullDateStr || "";
+        updated[index].date_error = null;
+      }
+      if (updated[index].sj_number && updated[index].day_number !== null) {
+        const fname = `SJ_${updated[index].sj_number}-${updated[index].day_number}.pdf`;
+        updated[index].proposed_filename = fname;
+        updated[index].final_filename = fname;
+        updated[index].status = "VALID";
+        updated[index].validation_errors = [];
+      }
+      setPages(updated);
+    } catch (e: any) {
+      console.warn("Gagal OCR:", e);
+    } finally {
+      setLoading(false);
+      setStatusText("");
     }
   };
 
@@ -404,14 +488,27 @@ export default function RenamerModule() {
                       </td>
                       <td className="px-4 py-2.5 text-right space-x-2">
                         {p.thumbnail && (
-                          <button
-                            onClick={() => setPreviewImage(p.thumbnail)}
-                            className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
-                          >
-                            Lihat Halaman
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSingleOcr(idx)}
+                              disabled={loading}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-semibold transition"
+                              title="Pindai ulang halaman ini dengan OCR"
+                            >
+                              🔍 Pindai OCR
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage(p.thumbnail)}
+                              className="text-xs text-slate-600 hover:text-slate-800 underline font-medium"
+                            >
+                              Lihat
+                            </button>
+                          </>
                         )}
                         <button
+                          type="button"
                           onClick={() => handleDownloadSingle(p.page_id, p.final_filename)}
                           className="text-xs text-slate-700 hover:text-slate-900 font-semibold bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded"
                         >

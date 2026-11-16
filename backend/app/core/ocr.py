@@ -53,20 +53,21 @@ def extract_text_from_page(page: fitz.Page) -> Tuple[str, str]:
 
     return "", "none"
 
-def generate_page_thumbnail(page: fitz.Page, max_dim: int = 600) -> str:
+def generate_page_thumbnail(page: fitz.Page, max_dim: int = 1400) -> str:
     """
-    Menghasilkan gambar pratinjau halaman PDF dalam format base64 PNG.
-    Digunakan di antarmuka web agar pengguna bisa melihat dokumen asli saat koreksi manual.
+    Menghasilkan gambar pratinjau halaman PDF dalam format base64 JPEG berkualitas tinggi.
+    Digunakan untuk verifikasi visual pengguna dan pembacaan OCR di sisi peramban (browser).
     """
     try:
-        # Hitung skala agar ukuran efisien dan hemat memori
         rect = page.rect
         scale = max_dim / max(rect.width, rect.height)
+        # Batasi skala antara 1.2x hingga 2.2x agar teks dan angka tajam terbaca OCR
+        scale = max(1.2, min(2.2, scale))
         mat = fitz.Matrix(scale, scale)
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        img_bytes = pix.tobytes("png")
+        img_bytes = pix.tobytes("jpeg", jpg_quality=85)
         b64_str = base64.b64encode(img_bytes).decode("utf-8")
-        return f"data:image/png;base64,{b64_str}"
+        return f"data:image/jpeg;base64,{b64_str}"
     except Exception as e:
         logger.error(f"Gagal membuat thumbnail halaman: {e}")
         return ""
