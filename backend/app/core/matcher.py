@@ -35,6 +35,11 @@ def normalize_po_number(raw_text: str, is_doc_a: bool = True) -> Optional[str]:
                 if po.lower() not in stopwords and len(po) >= 3:
                     return po
 
+        # Pola angka 8-12 digit spesifik format PO (misal: 2004595909, 2004603824)
+        match_po = re.search(r'\b(200[0-9]{7})\b', text)
+        if match_po:
+            return match_po.group(1).strip()
+
         # Fallback Dokumen A jika awalan tidak tertangkap tapi ada angka 6-12 digit
         match_digits = re.search(r'\b([0-9]{6,12})\b', text)
         if match_digits:
@@ -42,7 +47,12 @@ def normalize_po_number(raw_text: str, is_doc_a: bool = True) -> Optional[str]:
 
     else:
         # Dokumen B (Surat Jalan):
-        # 1. Coba cari jika ada label spesifik No PO / PO
+        # 1. Utamakan pola nomor PO 8-12 digit spesifik (misal: 2004595909, 2004603824)
+        match_po = re.search(r'\b(200[0-9]{7})\b', text)
+        if match_po:
+            return match_po.group(1).strip()
+
+        # 2. Coba cari jika ada label spesifik No PO / PO dengan digit minimal 4
         patterns = [
             r'(?:NO\.?\s*PO\.?|PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)'
         ]
@@ -50,10 +60,11 @@ def normalize_po_number(raw_text: str, is_doc_a: bool = True) -> Optional[str]:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 po = match.group(1).strip().strip(".:-#")
-                if po.lower() not in stopwords and len(po) >= 3 and (not po.isdigit() or len(po) >= 5):
+                digit_count = sum(c.isdigit() for c in po)
+                if po.lower() not in stopwords and digit_count >= 4:
                     return po
 
-        # 2. Pada tabel Surat Jalan, nomor PO (misal: 2004595909) berulang di setiap baris barang
+        # 3. Pada tabel Surat Jalan, nomor PO (misal: 2004595909) berulang di setiap baris barang
         candidates = re.findall(r'\b([0-9]{6,12})\b', text)
         if candidates:
             # Singkirkan nomor Surat Jalan jika tertangkap dalam daftar kandidat

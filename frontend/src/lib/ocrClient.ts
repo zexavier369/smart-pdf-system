@@ -140,19 +140,24 @@ export function extractPoFromText(text: string, isDocA: boolean): string | null 
     }
   } else {
     // Dokumen B (Surat Jalan):
-    // 1. Coba cari jika ada kolom No PO
+    // 1. Pada Surat Jalan, utamakan pola nomor PO 8-12 digit spesifik (misal: 2004595909, 2004603824)
+    const specificPo = text.match(/\b(200[0-9]{7})\b/);
+    if (specificPo) {
+      return specificPo[1];
+    }
+
+    // 2. Coba cari jika ada kolom No PO dengan nilai yang mengandung angka minimal 4 digit
     const pat = /(?:NO\.?\s*PO\.?|PO\s*(?:NUMBER|NO\.?|\#)?|P\.O\.?\s*(?:NUMBER|NO\.?|\#)?)[\s\:\#\.\-]+([A-Za-z0-9\-]+)/i;
     const match = text.match(pat);
     if (match && match[1]) {
       const po = match[1].trim().replace(/^[\.:\-#]+|[\.:\-#]+$/g, "");
-      if (!stopwords.has(po.toLowerCase()) && po.length >= 3) {
-        if (!/^\d+$/.test(po) || po.length >= 5) {
-          return po;
-        }
+      const digitCount = po.replace(/\D/g, "").length;
+      if (!stopwords.has(po.toLowerCase()) && digitCount >= 4) {
+        return po;
       }
     }
 
-    // 2. Pada tabel Surat Jalan, nomor PO (misal: 2004595909) berulang di setiap baris barang
+    // 3. Pada tabel Surat Jalan, nomor PO berulang di setiap baris barang
     const candidates = text.match(/\b([0-9]{6,12})\b/g);
     if (candidates && candidates.length > 0) {
       // Singkirkan nomor Surat Jalan jika ada
