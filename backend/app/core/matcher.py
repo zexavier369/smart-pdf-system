@@ -4,7 +4,7 @@ import io
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 import fitz  # PyMuPDF
-from app.core.ocr import extract_text_from_page, generate_page_thumbnail
+from app.core.ocr import extract_text_from_page, generate_page_thumbnail, extract_barcode_from_page
 
 logger = logging.getLogger("smart_pdf_matcher")
 
@@ -87,7 +87,15 @@ def analyze_document_pages(doc_bytes: bytes, filename: str, is_doc_a: bool = Tru
         # Ekstraksi teks & metode (direct atau OCR)
         text, method = extract_text_from_page(page)
         extracted_po = normalize_po_number(text, is_doc_a=is_doc_a)
-        thumbnail = generate_page_thumbnail(page, max_dim=500)
+
+        # Jika teks tidak membuahkan nomor PO, coba periksa barcode (sangat efektif untuk Goods Receipt)
+        if not extracted_po:
+            barcode_val = extract_barcode_from_page(page)
+            if barcode_val:
+                extracted_po = barcode_val
+                method = "barcode"
+
+        thumbnail = generate_page_thumbnail(page, max_dim=1400)
 
         pages_data.append({
             "doc_type": "A" if is_doc_a else "B",

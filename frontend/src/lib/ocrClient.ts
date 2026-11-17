@@ -11,11 +11,21 @@ export async function getOcrWorker() {
 
   if (!tesseractWorkerPromise) {
     tesseractWorkerPromise = (async () => {
-      // Tunggu hingga script Tesseract tersedia di window
-      let tries = 0;
-      while (!(window as any).Tesseract && tries < 40) {
-        await new Promise((r) => setTimeout(r, 100));
-        tries++;
+      // 1. Pastikan script Tesseract terpasang
+      if (!(window as any).Tesseract) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+          s.onload = resolve;
+          s.onerror = () => {
+            const s2 = document.createElement("script");
+            s2.src = "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js";
+            s2.onload = resolve;
+            s2.onerror = reject;
+            document.head.appendChild(s2);
+          };
+          document.head.appendChild(s);
+        });
       }
 
       const Tesseract = (window as any).Tesseract;
@@ -24,7 +34,9 @@ export async function getOcrWorker() {
       }
 
       const worker = await Tesseract.createWorker("eng", 1, {
-        logger: () => {} // Nonaktifkan log bising di konsol
+        workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+        corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js",
+        langPath: "https://cdn.jsdelivr.net/gh/naptha/tessdata@gh-pages/4.0.0",
       });
 
       return worker;
@@ -113,6 +125,12 @@ export function extractPoFromText(text: string, isDocA: boolean): string | null 
           return po;
         }
       }
+    }
+
+    // Pola angka 8-12 digit spesifik format PO (misal: 2004595909, 2004603824)
+    const specificPo = text.match(/\b(200[0-9]{7})\b/);
+    if (specificPo) {
+      return specificPo[1];
     }
 
     // Fallback: Angka 6-12 digit

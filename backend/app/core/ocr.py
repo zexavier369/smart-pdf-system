@@ -53,6 +53,27 @@ def extract_text_from_page(page: fitz.Page) -> Tuple[str, str]:
 
     return "", "none"
 
+def extract_barcode_from_page(page: fitz.Page) -> Optional[str]:
+    """
+    Mengekstrak nilai barcode 1D/2D (seperti Code 128 pada Goods Receipt)
+    menggunakan pustaka zxing-cpp jika tersedia.
+    """
+    try:
+        import zxingcpp
+        from PIL import Image
+        import io
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        img = Image.open(io.BytesIO(img_bytes))
+        results = zxingcpp.read_barcodes(img)
+        for r in results:
+            val = r.text.strip()
+            if val and len(val) >= 4:
+                return val
+    except Exception as e:
+        logger.debug(f"Ekstraksi barcode gagal/tidak tersedia: {e}")
+    return None
+
 def generate_page_thumbnail(page: fitz.Page, max_dim: int = 1400) -> str:
     """
     Menghasilkan gambar pratinjau halaman PDF dalam format base64 JPEG berkualitas tinggi.

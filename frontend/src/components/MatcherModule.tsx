@@ -196,6 +196,56 @@ export default function MatcherModule() {
     setPagesB(updated);
   };
 
+  const handleAutoPair = () => {
+    if (pagesA.length === 0 || pagesB.length === 0) return;
+
+    const newPagesB = [...pagesB];
+    const poListA = pagesA.map((p) => p.po_number.trim()).filter(Boolean);
+
+    if (poListA.length === 0) {
+      alert("Nomor PO pada Dokumen A belum terisi. Harap isi nomor PO Dokumen A terlebih dahulu.");
+      return;
+    }
+
+    if (mode === "1:2") {
+      // 1 PO Dokumen A dipasangkan ke 2 Halaman Dokumen B berurutan
+      for (let j = 0; j < newPagesB.length; j++) {
+        const poIndex = Math.floor(j / 2);
+        if (poIndex < poListA.length) {
+          newPagesB[j].po_number = poListA[poIndex];
+        }
+      }
+    } else {
+      // Mode 1:1: 1 PO Dokumen A ke 1 Halaman Dokumen B
+      for (let j = 0; j < newPagesB.length; j++) {
+        if (j < poListA.length) {
+          newPagesB[j].po_number = poListA[j];
+        }
+      }
+    }
+
+    setPagesB(newPagesB);
+  };
+
+  const handleQuickFillSample = () => {
+    const updatedA = [...pagesA];
+    const updatedB = [...pagesB];
+
+    if (updatedA.length >= 2) {
+      updatedA[0].po_number = "2004595909";
+      updatedA[1].po_number = "2004603824";
+    }
+    if (updatedB.length >= 4) {
+      updatedB[0].po_number = "2004595909";
+      updatedB[1].po_number = "2004595909";
+      updatedB[2].po_number = "2004603824";
+      updatedB[3].po_number = "2004603824";
+    }
+
+    setPagesA(updatedA);
+    setPagesB(updatedB);
+  };
+
   const handleRevalidate = async () => {
     if (!sessionId) return;
     setLoading(true);
@@ -488,17 +538,40 @@ export default function MatcherModule() {
 
           {/* 4. Tabel Koreksi Manual */}
           <div className="space-y-4 pt-4 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-              <h5 className="font-bold text-sm text-slate-900">
-                Tabel Koreksi Manual & Pratinjau Halaman
-              </h5>
-              <button
-                onClick={handleRevalidate}
-                disabled={loading}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow transition"
-              >
-                🔄 Jalankan Validasi Ulang
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h5 className="font-bold text-sm text-slate-900">
+                  Tabel Koreksi Manual & Pratinjau Halaman
+                </h5>
+                <p className="text-xs text-slate-500">
+                  Ketik nomor PO langsung di kolom input di bawah, atau gunakan tombol bantuan cepat di samping:
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleQuickFillSample}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 transition"
+                  title="Otomatis isi nomor PO sesuai berkas contoh Anda (2004595909 & 2004603824)"
+                >
+                  📋 Contoh Isi Otomatis
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutoPair}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 transition"
+                  title="Salin nomor PO Dokumen A ke Dokumen B berurutan sesuai mode"
+                >
+                  ⚡ Pasangkan Otomatis (Mode {mode})
+                </button>
+                <button
+                  onClick={handleRevalidate}
+                  disabled={loading}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow transition"
+                >
+                  🔄 Jalankan Validasi Ulang
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-lg">
