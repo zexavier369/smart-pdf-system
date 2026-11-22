@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 import fitz  # PyMuPDF
 from app.core.ocr import extract_text_from_page, generate_page_thumbnail
+from app.core.matcher import normalize_po_number
 
 logger = logging.getLogger("smart_pdf_renamer")
 
@@ -116,23 +117,32 @@ def analyze_renamer_page(
     """
     Menganalisis 1 halaman Surat Jalan:
     - Ekstraksi teks & OCR jika perlu.
-    - Ekstraksi Nomor SJ & Tanggal.
+    - Ekstraksi Nomor PO, Nomor SJ & Tanggal.
+    - Usulan penamaan berkas berdasarkan Nomor PO.
     - Pembuatan thumbnail pratinjau halaman.
     """
     text, method = extract_text_from_page(page)
+    po_num = normalize_po_number(text, is_doc_a=False)
     sj_num = extract_sj_number(text)
     day_num, full_date_str, date_error = parse_indonesian_date(text)
     thumbnail = generate_page_thumbnail(page, max_dim=1400)
 
-    # Susun usulan nama file jika nomor SJ dan tanggal berhasil diekstrak
+    # Susun usulan nama file (utamakan Nomor PO sesuai permintaan)
     proposed_filename = None
-    if sj_num and day_num is not None:
+    if po_num:
+        proposed_filename = f"{po_num}.pdf"
+    elif sj_num and day_num is not None:
         proposed_filename = f"SJ_{sj_num}-{day_num}.pdf"
+    elif sj_num:
+        proposed_filename = f"SJ_{sj_num}.pdf"
+    else:
+        proposed_filename = f"SJ_Hal_{page_number}.pdf"
 
     return {
         "page_id": f"{source_filename}_p{page_number}",
         "source_filename": source_filename,
         "page_number": page_number,
+        "po_number": po_num or "",
         "sj_number": sj_num or "",
         "day_number": day_num,
         "full_date_str": full_date_str or "",
@@ -146,37 +156,31 @@ def analyze_renamer_page(
 
 def validate_renamer_pages(pages: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Validasi ketat daftar halaman Surat Jalan:
-    1. Nomor SJ kosong / tidak terbaca.
-    2. Tanggal kosong / tidak valid.
-    3. Duplikasi Nomor SJ.
-    4. Tabrakan nama file final (Collision).
+    Validasi daftar halaman Surat Jalan:
+    1. Harus memiliki Nomor PO atau Nomor SJ atau Nama Berkas yang valid.
+    2. Jika menggunakan format tanggal (SJ_...-[Tanggal]), tanggal harus valid.
+    3. Nama berkas harus berakhiran .pdf.
     """
     issues = []
-    seen_sj: Dict[str, List[Dict[str, Any]]] = {}
-    seen_filenames: Dict[str, List[Dict[str, Any]]] = {}
 
     for p in pages:
         page_issues = []
+        po = p.get("po_number", "").strip()
         sj = p.get("sj_number", "").strip()
         day = p.get("day_number")
         final_name = p.get("final_filename", "").strip()
 
-        # 1. Periksa Nomor SJ
-        if not sj:
-            page_issues.append("Nomor SJ tidak terbaca atau kosong")
+        # Harus ada setidaknya Nomor PO atau Nomor SJ atau Nama Berkas
+        if not po and not sj and not final_name:
+            page_issues.append("Nomor PO dan Nomor SJ tidak terbaca")
             issues.append({
-                "type": "EMPTY_SJ",
-                "message": f"Berkas '{p['source_filename']}' Hal {p['page_number']}: Nomor Surat Jalan tidak terbaca.",
+                "type": "EMPTY_IDENTIFIER",
+                "message": f"Berkas '{p['source_filename']}' Hal {p['page_number']}: Nomor PO dan Nomor Surat Jalan tidak terbaca.",
                 "page_id": p["page_id"]
             })
-        else:
-            if sj not in seen_sj:
-                seen_sj[sj] = []
-            seen_sj[sj].append(p)
 
-        # 2. Periksa Tanggal
-        if day is None:
+        # Jika nama berkas memakai format tanggal (mengandung '-') tapi tanggal tidak ada
+        if "SJ_" in final_name and "-" in final_name and day is None:
             err = p.get("date_error") or "Tanggal tidak ditemukan"
             page_issues.append(err)
             issues.append({
@@ -185,44 +189,12 @@ def validate_renamer_pages(pages: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "page_id": p["page_id"]
             })
 
-        # 3. Periksa Nama File Final
-        if not final_name or not final_name.endswith(".pdf"):
-            page_issues.append("Nama file final tidak valid")
-        else:
-            if final_name not in seen_filenames:
-                seen_filenames[final_name] = []
-            seen_filenames[final_name].append(p)
+        # Format ekstensi nama berkas
+        if not final_name or not final_name.lower().endswith(".pdf"):
+            page_issues.append("Nama berkas harus berakhiran .pdf")
 
         p["status"] = "VALID" if len(page_issues) == 0 else "INVALID"
         p["validation_errors"] = page_issues
-
-    # Periksa Duplikasi Nomor SJ
-    for sj, occurrence in seen_sj.items():
-        if len(occurrence) > 1:
-            locs = ", ".join([f"{item['source_filename']} (Hal {item['page_number']})" for item in occurrence])
-            issues.append({
-                "type": "DUPLICATE_SJ",
-                "message": f"Nomor SJ '{sj}' ditemukan berulang di {len(occurrence)} tempat: {locs}.",
-                "sj_number": sj
-            })
-            for item in occurrence:
-                if "Nomor SJ Duplikat" not in item["validation_errors"]:
-                    item["validation_errors"].append("Nomor SJ Duplikat")
-                    item["status"] = "INVALID"
-
-    # Periksa Tabrakan Nama File (Collision)
-    for fname, occurrence in seen_filenames.items():
-        if len(occurrence) > 1:
-            locs = ", ".join([f"{item['source_filename']} (Hal {item['page_number']})" for item in occurrence])
-            issues.append({
-                "type": "FILENAME_COLLISION",
-                "message": f"Tabrakan nama file! Nama '{fname}' dihasilkan oleh {len(occurrence)} halaman: {locs}.",
-                "filename": fname
-            })
-            for item in occurrence:
-                if "Tabrakan Nama File" not in item["validation_errors"]:
-                    item["validation_errors"].append("Tabrakan Nama File")
-                    item["status"] = "INVALID"
 
     valid_count = len([p for p in pages if p["status"] == "VALID"])
     is_fully_valid = len(issues) == 0 and len(pages) > 0
@@ -255,30 +227,77 @@ def split_single_page_pdf(doc_bytes: bytes, page_number: int) -> bytes:
 
 def generate_renamer_zip(
     source_files_map: Dict[str, bytes],
-    pages_data: List[Dict[str, Any]]
+    pages_data: List[Dict[str, Any]],
+    group_by_po: bool = False
 ) -> bytes:
     """
     Menggabungkan seluruh halaman Surat Jalan yang telah dipisahkan ke dalam 1 arsip ZIP.
-    Setiap halaman menjadi file tersendiri dengan nama SJ_[NomorSJ]-[Tanggal].pdf.
+    - Jika group_by_po=True: Halaman-halaman dengan nomor PO / nama file yang sama digabung ke dalam 1 berkas PDF multi-halaman.
+    - Jika group_by_po=False: Setiap halaman menjadi file tersendiri. Jika ada nama berkas yang sama, otomatis diberi akhiran _Hal1, _Hal2 dst.
     """
     zip_buffer = io.BytesIO()
-    
+
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for p in pages_data:
-            # Lewati jika status belum valid
-            if p.get("status") != "VALID":
-                continue
+        valid_pages = [p for p in pages_data if p.get("status") == "VALID"]
+        
+        if group_by_po:
+            # Kelompokkan halaman berdasarkan final_filename (misal: 2004595909.pdf)
+            groups: Dict[str, List[Dict[str, Any]]] = {}
+            for p in valid_pages:
+                fname = p.get("final_filename", "").strip() or f"SJ_{p['page_number']}.pdf"
+                if not fname.lower().endswith(".pdf"):
+                    fname += ".pdf"
+                base_clean = re.sub(r'[\\/*?:"<>|]', '_', fname[:-4])
+                safe_fname = f"{base_clean}.pdf"
+                if safe_fname not in groups:
+                    groups[safe_fname] = []
+                groups[safe_fname].append(p)
 
-            src_filename = p["source_filename"]
-            page_num = p["page_number"]
-            final_name = p["final_filename"]
+            for fname, page_list in groups.items():
+                merged_doc = fitz.open()
+                for p in page_list:
+                    src_filename = p["source_filename"]
+                    doc_bytes = source_files_map.get(src_filename)
+                    if not doc_bytes:
+                        continue
+                    src_doc = fitz.open(stream=doc_bytes, filetype="pdf")
+                    merged_doc.insert_pdf(src_doc, from_page=p["page_number"] - 1, to_page=p["page_number"] - 1)
+                    src_doc.close()
+                pdf_bytes = merged_doc.tobytes(garbage=3, deflate=True)
+                merged_doc.close()
+                zip_file.writestr(fname, pdf_bytes)
 
-            doc_bytes = source_files_map.get(src_filename)
-            if not doc_bytes:
-                continue
+        else:
+            # File satuan per halaman dengan penomoran otomatis jika ada nama sama
+            name_counts: Dict[str, int] = {}
+            for p in valid_pages:
+                fname = p.get("final_filename", "").strip() or f"SJ_{p['page_number']}.pdf"
+                if not fname.lower().endswith(".pdf"):
+                    fname += ".pdf"
+                base_clean = re.sub(r'[\\/*?:"<>|]', '_', fname[:-4])
+                name_counts[base_clean] = name_counts.get(base_clean, 0) + 1
 
-            single_pdf_bytes = split_single_page_pdf(doc_bytes, page_num)
-            zip_file.writestr(final_name, single_pdf_bytes)
+            current_indices: Dict[str, int] = {}
+            for p in valid_pages:
+                src_filename = p["source_filename"]
+                doc_bytes = source_files_map.get(src_filename)
+                if not doc_bytes:
+                    continue
+
+                fname = p.get("final_filename", "").strip() or f"SJ_{p['page_number']}.pdf"
+                if not fname.lower().endswith(".pdf"):
+                    fname += ".pdf"
+                base_clean = re.sub(r'[\\/*?:"<>|]', '_', fname[:-4])
+
+                if name_counts.get(base_clean, 1) > 1:
+                    idx = current_indices.get(base_clean, 0) + 1
+                    current_indices[base_clean] = idx
+                    target_filename = f"{base_clean}_Hal{idx}.pdf"
+                else:
+                    target_filename = f"{base_clean}.pdf"
+
+                single_pdf_bytes = split_single_page_pdf(doc_bytes, p["page_number"])
+                zip_file.writestr(target_filename, single_pdf_bytes)
 
     return zip_buffer.getvalue()
 

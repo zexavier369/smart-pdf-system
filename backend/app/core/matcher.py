@@ -1,6 +1,7 @@
 import re
 import csv
 import io
+import zipfile
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 import fitz  # PyMuPDF
@@ -266,6 +267,85 @@ def merge_matched_pdf(
     output_doc.close()
 
     return output_bytes
+
+def split_and_zip_matched_pdf(
+    doc_a_bytes: bytes,
+    doc_b_bytes: bytes,
+    matched_pairs: List[Dict[str, Any]],
+    is_partial: bool = False
+) -> bytes:
+    """
+    Membuat file ZIP yang berisi berkas PDF terpisah untuk setiap nomor PO.
+    Setiap berkas PDF diberi nama sesuai nomor PO (misal: 2004595909.pdf).
+    Isi setiap berkas: Halaman Dokumen A diikuti Halaman Dokumen B yang berpasangan.
+    """
+    doc_a = fitz.open(stream=doc_a_bytes, filetype="pdf")
+    doc_b = fitz.open(stream=doc_b_bytes, filetype="pdf")
+    zip_buffer = io.BytesIO()
+    seen_filenames: Dict[str, int] = {}
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for pair in matched_pairs:
+            # Lewati jika bukan partial export dan status belum VALID
+            if not is_partial and pair.get("status") != "VALID":
+                continue
+
+            po = str(pair.get("po_number", "PO_UNKNOWN")).strip()
+            # Sanitasi karakter ilegal untuk nama berkas Windows/Linux
+            safe_po = re.sub(r'[\\/*?:"<>|]', '_', po) if po else "PO_TANPA_NOMOR"
+
+            # Cegah tabrakan nama berkas jika ada nomor PO yang berulang
+            count = seen_filenames.get(safe_po, 0)
+            seen_filenames[safe_po] = count + 1
+            if count == 0:
+                filename = f"{safe_po}.pdf"
+            else:
+                filename = f"{safe_po}_{count + 1}.pdf"
+
+            pair_doc = fitz.open()
+
+            # 1. Sisipkan Halaman dari Dokumen A
+            page_a_idx = pair["page_a"]["page_number"] - 1
+            pair_doc.insert_pdf(doc_a, from_page=page_a_idx, to_page=page_a_idx)
+
+            # 2. Sisipkan Halaman-halaman dari Dokumen B
+            for pb in pair.get("pages_b", []):
+                page_b_idx = pb["page_number"] - 1
+                pair_doc.insert_pdf(doc_b, from_page=page_b_idx, to_page=page_b_idx)
+
+            pdf_bytes = pair_doc.tobytes(garbage=3, deflate=True)
+            pair_doc.close()
+
+            zf.writestr(filename, pdf_bytes)
+
+    doc_a.close()
+    doc_b.close()
+    return zip_buffer.getvalue()
+
+def generate_single_pair_pdf(
+    doc_a_bytes: bytes,
+    doc_b_bytes: bytes,
+    pair: Dict[str, Any]
+) -> bytes:
+    """
+    Menghasilkan 1 berkas PDF untuk satu nomor PO pasangan tertentu.
+    """
+    doc_a = fitz.open(stream=doc_a_bytes, filetype="pdf")
+    doc_b = fitz.open(stream=doc_b_bytes, filetype="pdf")
+    pair_doc = fitz.open()
+
+    page_a_idx = pair["page_a"]["page_number"] - 1
+    pair_doc.insert_pdf(doc_a, from_page=page_a_idx, to_page=page_a_idx)
+
+    for pb in pair.get("pages_b", []):
+        page_b_idx = pb["page_number"] - 1
+        pair_doc.insert_pdf(doc_b, from_page=page_b_idx, to_page=page_b_idx)
+
+    pdf_bytes = pair_doc.tobytes(garbage=3, deflate=True)
+    pair_doc.close()
+    doc_a.close()
+    doc_b.close()
+    return pdf_bytes
 
 def generate_matcher_csv_report(
     analysis_result: Dict[str, Any],

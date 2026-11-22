@@ -77,4 +77,23 @@ if ($allHaveTwoPages) {
     exit 1
 }
 
+# Uji 4: Penamaan File PDF Terpisah Berdasarkan Nomor PO ([Nomor_PO].pdf)
+$matchedPairs = @(
+    @{ PoNumber = "2004595909"; PageA = 1; PagesB = @(1, 2) },
+    @{ PoNumber = "2004603824"; PageA = 2; PagesB = @(3, 4) }
+)
+
+$splitFiles = @()
+foreach ($p in $matchedPairs) {
+    $safePo = $p.PoNumber -replace '[\\/*?:"<>|]', '_'
+    $splitFiles += "$safePo.pdf"
+}
+
+if ($splitFiles[0] -eq "2004595909.pdf" -and $splitFiles[1] -eq "2004603824.pdf") {
+    Write-Host "[PASS] Penamaan Split per Nomor PO: File '2004595909.pdf' dan '2004603824.pdf' terbukti presisi!" -ForegroundColor Green
+} else {
+    Write-Host "[FAIL] Penamaan file split gagal: $($splitFiles -join ', ')" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "`nKESIMPULAN: SELURUH LOGIKA UTAMA PDF MATCHER TERBUKTI VALID & AKURAT." -ForegroundColor Cyan

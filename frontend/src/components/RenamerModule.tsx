@@ -8,6 +8,7 @@ interface RenamerPage {
   page_id: string;
   source_filename: string;
   page_number: number;
+  po_number: string;
   sj_number: string;
   day_number: number | null;
   full_date_str: string;
@@ -39,6 +40,8 @@ export default function RenamerModule() {
   const [pages, setPages] = useState<RenamerPage[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [groupByPo, setGroupByPo] = useState<boolean>(true);
+  const [namingPreset, setNamingPreset] = useState<string>("po");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -46,6 +49,30 @@ export default function RenamerModule() {
       setSelectedFiles(filesArray);
       setErrorMsg(null);
     }
+  };
+
+  const applyNamingPreset = (preset: string) => {
+    setNamingPreset(preset);
+    const updated = pages.map((p, idx) => {
+      let fname = p.final_filename;
+      const po = (p.po_number || "").trim();
+      const sj = (p.sj_number || "").trim();
+      if (preset === "po") {
+        fname = po ? `${po}.pdf` : (sj ? `SJ_${sj}.pdf` : `SJ_Hal_${idx + 1}.pdf`);
+      } else if (preset === "po_prefix") {
+        fname = po ? `PO_${po}.pdf` : (sj ? `SJ_${sj}.pdf` : `SJ_Hal_${idx + 1}.pdf`);
+      } else if (preset === "sj") {
+        if (sj && p.day_number !== null) {
+          fname = `SJ_${sj}-${p.day_number}.pdf`;
+        } else if (sj) {
+          fname = `SJ_${sj}.pdf`;
+        } else {
+          fname = `SJ_Hal_${idx + 1}.pdf`;
+        }
+      }
+      return { ...p, final_filename: fname, proposed_filename: fname };
+    });
+    setPages(updated);
   };
 
   const handleStartAnalysis = async () => {
@@ -76,18 +103,21 @@ export default function RenamerModule() {
       setValidation(data.validation);
       setPages(currentPages);
 
-      // Periksa apakah ada halaman hasil scan gambar yang nomor SJ atau tanggalnya belum terbaca
-      const needsOcr = currentPages.some((p) => !p.sj_number || p.day_number === null);
+      // Periksa apakah ada halaman hasil scan gambar yang nomor PO atau nomor SJ-nya belum terbaca
+      const needsOcr = currentPages.some((p) => !p.po_number && !p.sj_number);
 
       if (needsOcr) {
         setStatusText("Mendeteksi PDF scan gambar. Membaca teks otomatis di peramban (OCR)...");
 
         for (let i = 0; i < currentPages.length; i++) {
-          if ((!currentPages[i].sj_number || currentPages[i].day_number === null) && currentPages[i].thumbnail) {
+          if ((!currentPages[i].po_number || !currentPages[i].sj_number) && currentPages[i].thumbnail) {
             setStatusText(`Membaca Surat Jalan Halaman ${i + 1} dari ${currentPages.length}...`);
             const ocrText = await runOcrOnImage(currentPages[i].thumbnail);
             const sjData = extractSjDataFromText(ocrText);
 
+            if (sjData.poNumber && !currentPages[i].po_number) {
+              currentPages[i].po_number = sjData.poNumber;
+            }
             if (sjData.sjNumber && !currentPages[i].sj_number) {
               currentPages[i].sj_number = sjData.sjNumber;
             }
@@ -96,13 +126,23 @@ export default function RenamerModule() {
               currentPages[i].full_date_str = sjData.fullDateStr || "";
               currentPages[i].date_error = null;
             }
-            if (currentPages[i].sj_number && currentPages[i].day_number !== null) {
-              const proposed = `SJ_${currentPages[i].sj_number}-${currentPages[i].day_number}.pdf`;
-              currentPages[i].proposed_filename = proposed;
-              currentPages[i].final_filename = proposed;
-              currentPages[i].status = "VALID";
-              currentPages[i].validation_errors = [];
+
+            // Usulan nama berkas: Utamakan Nomor PO sesuai permintaan
+            let proposed = "";
+            if (currentPages[i].po_number) {
+              proposed = `${currentPages[i].po_number}.pdf`;
+            } else if (currentPages[i].sj_number && currentPages[i].day_number !== null) {
+              proposed = `SJ_${currentPages[i].sj_number}-${currentPages[i].day_number}.pdf`;
+            } else if (currentPages[i].sj_number) {
+              proposed = `SJ_${currentPages[i].sj_number}.pdf`;
+            } else {
+              proposed = `SJ_Hal_${i + 1}.pdf`;
             }
+
+            currentPages[i].proposed_filename = proposed;
+            currentPages[i].final_filename = proposed;
+            currentPages[i].status = "VALID";
+            currentPages[i].validation_errors = [];
           }
         }
 
@@ -142,19 +182,33 @@ export default function RenamerModule() {
       const sjData = extractSjDataFromText(ocrText);
 
       const updated = [...pages];
+      if (sjData.poNumber) updated[index].po_number = sjData.poNumber;
       if (sjData.sjNumber) updated[index].sj_number = sjData.sjNumber;
       if (sjData.dayNumber !== null) {
         updated[index].day_number = sjData.dayNumber;
         updated[index].full_date_str = sjData.fullDateStr || "";
         updated[index].date_error = null;
       }
-      if (updated[index].sj_number && updated[index].day_number !== null) {
-        const fname = `SJ_${updated[index].sj_number}-${updated[index].day_number}.pdf`;
-        updated[index].proposed_filename = fname;
-        updated[index].final_filename = fname;
-        updated[index].status = "VALID";
-        updated[index].validation_errors = [];
+
+      const po = updated[index].po_number || "";
+      const sj = updated[index].sj_number || "";
+      let fname = "";
+      if (namingPreset === "po" && po) {
+        fname = `${po}.pdf`;
+      } else if (namingPreset === "po_prefix" && po) {
+        fname = `PO_${po}.pdf`;
+      } else if (sj && updated[index].day_number !== null) {
+        fname = `SJ_${sj}-${updated[index].day_number}.pdf`;
+      } else if (sj) {
+        fname = `SJ_${sj}.pdf`;
+      } else {
+        fname = `SJ_Hal_${index + 1}.pdf`;
       }
+
+      updated[index].proposed_filename = fname;
+      updated[index].final_filename = fname;
+      updated[index].status = "VALID";
+      updated[index].validation_errors = [];
       setPages(updated);
     } catch (e: any) {
       console.warn("Gagal OCR:", e);
@@ -164,22 +218,31 @@ export default function RenamerModule() {
     }
   };
 
-  const handleFieldChange = (index: number, field: "sj_number" | "final_filename", value: string) => {
+  const handleFieldChange = (index: number, field: "po_number" | "sj_number" | "final_filename", value: string) => {
     const updated = [...pages];
     updated[index][field] = value;
-    
-    // Jika nomor SJ diubah, perbarui juga usulan nama file otomatis jika ada angka hari
-    if (field === "sj_number" && updated[index].day_number !== null) {
-      updated[index].final_filename = `SJ_${value.trim()}-${updated[index].day_number}.pdf`;
+
+    if (field === "po_number" && (namingPreset === "po" || namingPreset === "po_prefix")) {
+      const cleanVal = value.trim();
+      if (cleanVal) {
+        updated[index].final_filename = namingPreset === "po" ? `${cleanVal}.pdf` : `PO_${cleanVal}.pdf`;
+      }
+    } else if (field === "sj_number" && namingPreset === "sj") {
+      const cleanVal = value.trim();
+      if (cleanVal && updated[index].day_number !== null) {
+        updated[index].final_filename = `SJ_${cleanVal}-${updated[index].day_number}.pdf`;
+      } else if (cleanVal) {
+        updated[index].final_filename = `SJ_${cleanVal}.pdf`;
+      }
     }
-    
+
     setPages(updated);
   };
 
   const handleRevalidate = async () => {
     if (!sessionId) return;
     setLoading(true);
-    setStatusText("Menjalankan validasi ulang kalender dan duplikasi...");
+    setStatusText("Menjalankan validasi ulang...");
     setErrorMsg(null);
 
     try {
@@ -215,7 +278,7 @@ export default function RenamerModule() {
 
     try {
       setLoading(true);
-      setStatusText("Memisahkan halaman dan membuat file ZIP...");
+      setStatusText(groupByPo ? "Mengelompokkan per nomor PO dan membuat file ZIP..." : "Memisahkan halaman dan membuat file ZIP...");
 
       const res = await fetchWithAuth("/api/renamer/download-zip", {
         method: "POST",
@@ -223,6 +286,7 @@ export default function RenamerModule() {
         body: JSON.stringify({
           session_id: sessionId,
           is_partial: isPartial,
+          group_by_po: groupByPo,
         }),
       });
 
@@ -230,7 +294,7 @@ export default function RenamerModule() {
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = `Surat_Jalan_Separated${isPartial ? "_PARTIAL" : ""}.zip`;
+      link.download = `Surat_Jalan_${groupByPo ? "Grouped_PO" : "Split"}${isPartial ? "_PARTIAL" : ""}.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -414,79 +478,149 @@ export default function RenamerModule() {
             </div>
           )}
 
-          {/* 3. Tabel Koreksi Manual Surat Jalan */}
+          {/* 3. Tabel Koreksi Manual Surat Jalan & Pilihan Format Penamaan */}
           <div className="space-y-4 pt-4 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-              <h5 className="font-bold text-sm text-slate-900">
-                Rincian Halaman Surat Jalan & Koreksi Manual
-              </h5>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h5 className="font-bold text-sm text-slate-900">
+                  Rincian Halaman Surat Jalan & Pilihan Format Penamaan
+                </h5>
+                <p className="text-xs text-slate-500">
+                  Pilih format nama file target dan periksa hasil ekstraksi Nomor PO / Nomor SJ di bawah:
+                </p>
+              </div>
               <button
                 onClick={handleRevalidate}
                 disabled={loading}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow transition"
+                className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow transition self-start sm:self-auto"
               >
                 🔄 Jalankan Validasi Ulang
               </button>
+            </div>
+
+            {/* Pilihan Cepat Format Penamaan & Opsi Pengelompokan */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold text-slate-700">Format Nama:</span>
+                <button
+                  type="button"
+                  onClick={() => applyNamingPreset("po")}
+                  className={`px-3 py-1 text-xs rounded-md font-semibold transition ${
+                    namingPreset === "po"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                  }`}
+                  title="Format: [Nomor_PO].pdf (misal: 2004595909.pdf)"
+                >
+                  [Nomor_PO].pdf (Rekomendasi)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyNamingPreset("po_prefix")}
+                  className={`px-3 py-1 text-xs rounded-md font-semibold transition ${
+                    namingPreset === "po_prefix"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                  }`}
+                  title="Format: PO_[Nomor_PO].pdf (misal: PO_2004595909.pdf)"
+                >
+                  PO_[Nomor_PO].pdf
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyNamingPreset("sj")}
+                  className={`px-3 py-1 text-xs rounded-md font-semibold transition ${
+                    namingPreset === "sj"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                  }`}
+                  title="Format: SJ_[NomorSJ]-[Tanggal].pdf"
+                >
+                  SJ_[NomorSJ]-[Tanggal].pdf
+                </button>
+              </div>
+
+              <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={groupByPo}
+                  onChange={(e) => setGroupByPo(e.target.checked)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                />
+                <span className="font-semibold text-slate-800">
+                  Gabungkan halaman dengan Nomor PO sama ke 1 file PDF
+                </span>
+              </label>
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-lg">
               <table className="min-w-full divide-y divide-slate-200 text-xs">
                 <thead className="bg-slate-100 text-slate-700 font-bold">
                   <tr>
-                    <th className="px-4 py-3 text-left">Sumber PDF & Hal</th>
-                    <th className="px-4 py-3 text-left">Nomor SJ (Dapat Diedit)</th>
-                    <th className="px-4 py-3 text-left">Tanggal Terbaca</th>
-                    <th className="px-4 py-3 text-left">Nama File Final</th>
-                    <th className="px-4 py-3 text-left">Status</th>
-                    <th className="px-4 py-3 text-right">Aksi</th>
+                    <th className="px-3 py-3 text-left">Sumber & Hal</th>
+                    <th className="px-3 py-3 text-left">Nomor PO (Dapat Diedit)</th>
+                    <th className="px-3 py-3 text-left">Nomor SJ (Dapat Diedit)</th>
+                    <th className="px-3 py-3 text-left">Tanggal</th>
+                    <th className="px-3 py-3 text-left">Nama File Final</th>
+                    <th className="px-3 py-3 text-left">Status</th>
+                    <th className="px-3 py-3 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 bg-white">
                   {pages.map((p, idx) => (
                     <tr key={p.page_id} className="hover:bg-slate-50">
-                      <td className="px-4 py-2.5 text-slate-700">
+                      <td className="px-3 py-2.5 text-slate-700">
                         <div className="font-semibold truncate max-w-xs">{p.source_filename}</div>
                         <div className="text-[10px] text-slate-400">Halaman {p.page_number}</div>
                       </td>
-                      <td className="px-4 py-2.5">
+                      <td className="px-3 py-2.5">
+                        <input
+                          type="text"
+                          value={p.po_number || ""}
+                          onChange={(e) => handleFieldChange(idx, "po_number", e.target.value)}
+                          placeholder="Nomor PO..."
+                          className="font-mono text-xs px-2 py-1 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-32 font-semibold text-slate-900"
+                        />
+                      </td>
+                      <td className="px-3 py-2.5">
                         <input
                           type="text"
                           value={p.sj_number}
                           onChange={(e) => handleFieldChange(idx, "sj_number", e.target.value)}
                           placeholder="Nomor SJ..."
-                          className="font-mono text-xs px-2.5 py-1 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-36"
+                          className="font-mono text-xs px-2 py-1 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-28"
                         />
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">
+                      <td className="px-3 py-2.5 text-slate-600">
                         {p.full_date_str ? (
                           <div>
                             <span className="font-medium text-slate-900">{p.full_date_str}</span>
-                            <span className="ml-1 text-slate-400 text-[10px]">(Hari: {p.day_number})</span>
+                            <span className="ml-1 text-slate-400 text-[10px]">({p.day_number})</span>
                           </div>
                         ) : (
-                          <span className="text-red-600 italic">Tidak Terbaca</span>
+                          <span className="text-slate-400 italic">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5">
+                      <td className="px-3 py-2.5">
                         <input
                           type="text"
                           value={p.final_filename}
                           onChange={(e) => handleFieldChange(idx, "final_filename", e.target.value)}
-                          className="font-mono text-xs px-2 py-1 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-48 text-blue-700 font-semibold"
+                          className="font-mono text-xs px-2 py-1 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 w-44 text-blue-700 font-semibold"
                         />
                       </td>
-                      <td className="px-4 py-2.5">
+                      <td className="px-3 py-2.5">
                         {p.status === "VALID" ? (
-                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-bold">
+                          <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded font-bold">
                             Valid
                           </span>
                         ) : (
-                          <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded font-bold" title={p.validation_errors.join(", ")}>
-                            Perlu Perhatian
+                          <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-bold" title={p.validation_errors.join(", ")}>
+                            Perlu Cek
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right space-x-2">
+                      <td className="px-3 py-2.5 text-right space-x-2">
                         {p.thumbnail && (
                           <>
                             <button
@@ -496,7 +630,7 @@ export default function RenamerModule() {
                               className="text-xs text-blue-600 hover:text-blue-800 font-semibold transition"
                               title="Pindai ulang halaman ini dengan OCR"
                             >
-                              🔍 Pindai OCR
+                              🔍 OCR
                             </button>
                             <button
                               type="button"
@@ -539,9 +673,10 @@ export default function RenamerModule() {
                     ? "bg-blue-600 hover:bg-blue-700"
                     : "bg-amber-600 hover:bg-amber-700"
                 }`}
+                title="Mengunduh seluruh file yang sudah dinamai sesuai nomor PO ke dalam arsip ZIP"
               >
                 {validation.is_fully_valid
-                  ? "📦 Unduh Seluruh Hasil (.ZIP)"
+                  ? `📦 Unduh ZIP File Terpisah (${groupByPo ? "Gabung per PO" : "Split per Halaman"})`
                   : "⚠ Unduh Arsip ZIP (Ekspor Sebagian)"}
               </button>
             </div>

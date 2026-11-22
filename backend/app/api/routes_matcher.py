@@ -1,4 +1,5 @@
 import uuid
+import re
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Response
 from pydantic import BaseModel
@@ -9,6 +10,8 @@ from app.core.matcher import (
     analyze_document_pages,
     match_and_validate,
     merge_matched_pdf,
+    split_and_zip_matched_pdf,
+    generate_single_pair_pdf,
     generate_matcher_csv_report
 )
 
@@ -24,6 +27,10 @@ class MergeRequest(BaseModel):
     session_id: str
     is_partial: bool = False
     matched_pairs: Optional[List[Dict[str, Any]]] = None
+
+class SinglePairRequest(BaseModel):
+    session_id: str
+    po_number: str
 
 @router.post("/analyze")
 async def analyze_matcher_documents(
@@ -108,6 +115,76 @@ def revalidate_after_correction(
         "status": "success",
         "analysis": new_analysis
     }
+
+@router.post("/download-zip")
+def download_split_zip(
+    request: MergeRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    session = matcher_sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sesi kerja tidak ditemukan atau telah kedaluwarsa. Silakan upload ulang.")
+
+    analysis = session.get("analysis", {})
+    matched_pairs = request.matched_pairs or analysis.get("matched_pairs", [])
+
+    if not request.is_partial and not analysis.get("is_fully_valid"):
+        raise HTTPException(
+            status_code=400,
+            detail="Masih terdapat kesalahan validasi yang belum diselesaikan. Gunakan ekspor sebagian jika ingin melanjutkan."
+        )
+
+    zip_bytes = split_and_zip_matched_pdf(
+        session["doc_a_bytes"],
+        session["doc_b_bytes"],
+        matched_pairs,
+        is_partial=request.is_partial
+    )
+
+    mode_str = session.get("mode", "1-1").replace(":", "-")
+    filename = f"Split_PO_{mode_str}{'_PARTIAL' if request.is_partial else ''}.zip"
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@router.post("/download-single")
+def download_single_pair(
+    request: SinglePairRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    session = matcher_sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sesi kerja tidak ditemukan atau telah kedaluwarsa.")
+
+    analysis = session.get("analysis", {})
+    matched_pairs = analysis.get("matched_pairs", [])
+
+    target_pair = None
+    for pair in matched_pairs:
+        if str(pair.get("po_number", "")).strip() == request.po_number.strip():
+            target_pair = pair
+            break
+
+    if not target_pair:
+        raise HTTPException(status_code=404, detail=f"Nomor PO '{request.po_number}' tidak ditemukan pada pasangan yang cocok.")
+
+    pdf_bytes = generate_single_pair_pdf(
+        session["doc_a_bytes"],
+        session["doc_b_bytes"],
+        target_pair
+    )
+
+    safe_po = re.sub(r'[\\/*?:"<>|]', '_', request.po_number.strip())
+    filename = f"{safe_po}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 @router.post("/merge")
 def merge_and_download(

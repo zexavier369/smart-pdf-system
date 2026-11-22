@@ -23,6 +23,7 @@ class RenamerRevalidateRequest(BaseModel):
 class RenamerExportRequest(BaseModel):
     session_id: str
     is_partial: bool = False
+    group_by_po: bool = False
 
 @router.post("/analyze")
 async def analyze_renamer_documents(
@@ -120,10 +121,11 @@ def download_renamer_zip(
 
     zip_bytes = generate_renamer_zip(
         session["source_files_map"],
-        session["pages"]
+        session["pages"],
+        group_by_po=request.group_by_po
     )
 
-    filename = f"Surat_Jalan_Separated{'_PARTIAL' if request.is_partial else ''}.zip"
+    filename = f"Surat_Jalan_{'Grouped_PO' if request.group_by_po else 'Separated'}{'_PARTIAL' if request.is_partial else ''}.zip"
 
     return Response(
         content=zip_bytes,

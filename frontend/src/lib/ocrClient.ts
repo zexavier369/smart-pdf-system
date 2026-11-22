@@ -207,18 +207,22 @@ const MONTH_MAP: Record<string, number> = {
 };
 
 /**
- * Ekstraksi Nomor Surat Jalan dan Tanggal dari teks halaman Surat Jalan
+ * Ekstraksi Nomor PO, Nomor Surat Jalan dan Tanggal dari teks halaman Surat Jalan
  */
 export function extractSjDataFromText(text: string): {
+  poNumber: string | null;
   sjNumber: string | null;
   dayNumber: number | null;
   fullDateStr: string | null;
 } {
   if (!text) {
-    return { sjNumber: null, dayNumber: null, fullDateStr: null };
+    return { poNumber: null, sjNumber: null, dayNumber: null, fullDateStr: null };
   }
 
-  // 1. Nomor Surat Jalan
+  // 1. Ekstraksi Nomor PO pada Surat Jalan
+  const poNumber = extractPoFromText(text, false);
+
+  // 2. Nomor Surat Jalan
   let sjNumber: string | null = null;
   const sjPatterns = [
     /(?:SURAT\s+JALAN|NO\.?\s*SURAT\s+JALAN|NO\.?\s*SJ|SJ\s*NO)[\s\:\#\.\-]+([A-Za-z0-9\/\.\-_]+)/i,
@@ -236,7 +240,7 @@ export function extractSjDataFromText(text: string): {
     }
   }
 
-  // 2. Tanggal (Format: 03 Nov 2026 atau 03 November 2026)
+  // 3. Tanggal (Format: 03 Nov 2026 atau 03 November 2026)
   let dayNumber: number | null = null;
   let fullDateStr: string | null = null;
 
@@ -271,5 +275,5 @@ export function extractSjDataFromText(text: string): {
     }
   }
 
-  return { sjNumber, dayNumber, fullDateStr };
+  return { poNumber, sjNumber, dayNumber, fullDateStr };
 }

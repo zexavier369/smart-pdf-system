@@ -274,6 +274,77 @@ export default function MatcherModule() {
     }
   };
 
+  const handleDownloadZip = async (isPartial: boolean = false) => {
+    if (!sessionId) return;
+    if (!isPartial && !analysis?.is_fully_valid) {
+      const confirmPartial = window.confirm(
+        "Masih ada kesalahan atau nomor PO yang belum cocok sempurna. Apakah Anda ingin mengekspor SEBAGIAN (hanya PO yang cocok) ke dalam ZIP file terpisah per nomor PO?"
+      );
+      if (!confirmPartial) return;
+      isPartial = true;
+    }
+
+    try {
+      setLoading(true);
+      setStatusText("Memisahkan PDF per nomor PO dan menyusun arsip ZIP...");
+
+      const res = await fetchWithAuth("/api/matcher/download-zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          is_partial: isPartial,
+        }),
+      });
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      const cleanMode = mode.replace(":", "-");
+      link.download = `Hasil_Split_PO_${cleanMode}${isPartial ? "_PARTIAL" : ""}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal mengunduh arsip ZIP per nomor PO.");
+    } finally {
+      setLoading(false);
+      setStatusText("");
+    }
+  };
+
+  const handleDownloadSinglePair = async (poNumber: string) => {
+    if (!sessionId || !poNumber) return;
+    try {
+      setLoading(true);
+      setStatusText(`Mengunduh berkas PDF terpisah untuk PO ${poNumber}...`);
+
+      const res = await fetchWithAuth("/api/matcher/download-single", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          po_number: poNumber,
+        }),
+      });
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${poNumber}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err: any) {
+      setErrorMsg(err.message || `Gagal mengunduh berkas PDF untuk PO ${poNumber}.`);
+    } finally {
+      setLoading(false);
+      setStatusText("");
+    }
+  };
+
   const handleDownloadMerged = async (isPartial: boolean = false) => {
     if (!sessionId) return;
     if (!isPartial && !analysis?.is_fully_valid) {
@@ -682,6 +753,80 @@ export default function MatcherModule() {
             </div>
           </div>
 
+          {/* Tabel Berkas PDF Terpisah per Nomor PO */}
+          {analysis.matched_pairs && analysis.matched_pairs.length > 0 && (
+            <div className="space-y-3 pt-4 border-t border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="font-bold text-sm text-slate-900">
+                    Daftar Berkas Terpisah per Nomor PO (Split Output)
+                  </h5>
+                  <p className="text-xs text-slate-500">
+                    Setiap nomor PO akan diekspor sebagai 1 berkas PDF terpisah bernama <span className="font-mono font-bold text-emerald-700">[Nomor_PO].pdf</span>:
+                  </p>
+                </div>
+                <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full font-semibold">
+                  Total: {analysis.matched_pairs.length} Berkas PO
+                </span>
+              </div>
+
+              <div className="overflow-x-auto border border-emerald-200 bg-emerald-50/20 rounded-lg">
+                <table className="min-w-full divide-y divide-emerald-200 text-xs">
+                  <thead className="bg-emerald-100/60 text-emerald-900 font-bold">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left">Nama Berkas Target</th>
+                      <th className="px-4 py-2.5 text-left">Nomor PO</th>
+                      <th className="px-4 py-2.5 text-left">Dokumen A (Goods Receipt)</th>
+                      <th className="px-4 py-2.5 text-left">Dokumen B (Surat Jalan)</th>
+                      <th className="px-4 py-2.5 text-left">Status</th>
+                      <th className="px-4 py-2.5 text-right">Unduh Satuan</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-100 bg-white">
+                    {analysis.matched_pairs.map((pair, idx) => (
+                      <tr key={idx} className="hover:bg-emerald-50/40">
+                        <td className="px-4 py-2.5 font-mono font-bold text-emerald-800">
+                          {pair.po_number}.pdf
+                        </td>
+                        <td className="px-4 py-2.5 font-semibold text-slate-700">
+                          {pair.po_number}
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-600">
+                          Halaman {pair.page_a.page_number}
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-600">
+                          {pair.pages_b.map((pb) => `Halaman ${pb.page_number}`).join(", ")}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {pair.status === "VALID" ? (
+                            <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded font-medium">
+                              ✓ Cocok (Mode {mode})
+                            </span>
+                          ) : (
+                            <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-medium">
+                              ⚠ Halaman B Tidak Sesuai
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadSinglePair(pair.po_number)}
+                            disabled={loading}
+                            className="inline-flex items-center px-2.5 py-1 text-xs font-bold rounded bg-slate-100 hover:bg-emerald-100 text-slate-800 hover:text-emerald-900 border border-slate-300 transition"
+                            title={`Unduh berkas ${pair.po_number}.pdf`}
+                          >
+                            ⬇️ Unduh PDF Ini
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* 5. Aksi Unduh */}
           <div className="pt-6 border-t border-slate-200 flex flex-wrap items-center justify-between gap-4">
             <button
@@ -691,18 +836,27 @@ export default function MatcherModule() {
               📥 Unduh Laporan CSV
             </button>
 
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => handleDownloadMerged(false)}
+                className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-sm transition"
+                title="Mengunduh seluruh PO yang digabung ke dalam 1 file PDF panjang"
+              >
+                📄 Unduh PDF Gabungan Tunggal
+              </button>
+
+              <button
+                onClick={() => handleDownloadZip(false)}
                 className={`px-5 py-2.5 rounded-lg text-white font-bold text-xs shadow transition ${
                   analysis.is_fully_valid
                     ? "bg-emerald-600 hover:bg-emerald-700"
                     : "bg-amber-600 hover:bg-amber-700"
                 }`}
+                title="Mengunduh berkas ZIP berisi PDF yang sudah displit per nomor PO ([PO].pdf)"
               >
                 {analysis.is_fully_valid
-                  ? "✓ Unduh PDF Gabungan Lengkap"
-                  : "⚠ Unduh PDF Gabungan (Ekspor Sebagian)"}
+                  ? "📦 Unduh ZIP File Terpisah per No. PO ([PO].pdf)"
+                  : "⚠ Unduh ZIP Split (Ekspor Sebagian)"}
               </button>
             </div>
           </div>

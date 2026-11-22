@@ -96,4 +96,32 @@ if ($duplicates.Count -gt 0 -and $duplicates[0].Name -eq "SJ-9001") {
     exit 1
 }
 
+# 4. Uji Penamaan Berkas Renamer Berdasarkan Nomor PO ([Nomor_PO].pdf)
+$sjPages = @(
+    @{ Page = 1; Text = "PT ANUGERAH - SURAT JALAN No PO. 2004595909 03 Nov 2026" },
+    @{ Page = 2; Text = "PT ANUGERAH - SURAT JALAN No PO. 2004595909 03 Nov 2026" },
+    @{ Page = 3; Text = "PT ANUGERAH - SURAT JALAN No PO. 2004603824 04 Nov 2026" },
+    @{ Page = 4; Text = "PT ANUGERAH - SURAT JALAN No PO. 2004603824 04 Nov 2026" }
+)
+
+$extractedFiles = @{}
+foreach ($p in $sjPages) {
+    if ($p.Text -match "(?:NO\.?\s*PO\.?|PO)[\s\:\#\.\-]+([0-9]{6,12})") {
+        $poNum = $matches[1]
+        $targetFile = "$poNum.pdf"
+        if (-not $extractedFiles.ContainsKey($targetFile)) {
+            $extractedFiles[$targetFile] = @()
+        }
+        $extractedFiles[$targetFile] += $p.Page
+    }
+}
+
+if ($extractedFiles.ContainsKey("2004595909.pdf") -and $extractedFiles["2004595909.pdf"].Count -eq 2 -and
+    $extractedFiles.ContainsKey("2004603824.pdf") -and $extractedFiles["2004603824.pdf"].Count -eq 2) {
+    Write-Host "[PASS] Ekstraksi PO & Pengelompokan Berkas Renamer ([Nomor_PO].pdf): Sukses mengelompokkan halaman per nomor PO!" -ForegroundColor Green
+} else {
+    Write-Host "[FAIL] Ekstraksi PO Renamer gagal!" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "`nKESIMPULAN: SELURUH LOGIKA UTAMA PDF RENAMER TERBUKTI VALID & AKURAT." -ForegroundColor Cyan

@@ -35,7 +35,7 @@ export default function RootLayout({
             
             <div className="flex items-center space-x-2">
               <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                v1.2.1 • Akurasi OCR Diperbarui
+                v1.3.0 • Ekspor Split per PO
               </span>
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
                 <span className="w-2 h-2 mr-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
